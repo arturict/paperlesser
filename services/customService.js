@@ -11,19 +11,26 @@ const paperlessService = require('./paperlessService');
 const fs = require('fs').promises;
 const path = require('path');
 const RestrictionPromptService = require('./restrictionPromptService');
+const { normalizeProvider } = require('./providerCatalogService');
 
 class CustomOpenAIService {
   constructor() {
     this.client = null;
     this.tokenizer = null;
+    this.clientKey = null;
   }
 
   initialize() {
-    if (!this.client && config.aiProvider === 'custom') {
+    const provider = normalizeProvider(config.aiProvider);
+    const apiUrl = config.compatible.apiUrl || config.custom.apiUrl;
+    const apiKey = config.compatible.apiKey || config.custom.apiKey;
+
+    if ((provider === 'compatible' || provider === 'custom') && (!this.client || this.clientKey !== `${provider}:${apiUrl}`)) {
       this.client = new OpenAI({
-        baseURL: config.custom.apiUrl,
-        apiKey: config.custom.apiKey
+        baseURL: apiUrl,
+        apiKey: apiKey || 'paperlesser-compatible'
       });
+      this.clientKey = `${provider}:${apiUrl}`;
     }
   }
 
@@ -74,7 +81,7 @@ class CustomOpenAIService {
 
       let systemPrompt = '';
       let promptTags = '';
-      const model = config.custom.model;
+      const model = config.compatible.model || config.custom.model;
 
       // Parse CUSTOM_FIELDS from environment variable
       let customFieldsObj;
@@ -179,20 +186,26 @@ class CustomOpenAIService {
       // console.log('######################################################################');
 
 
-      const response = await this.client.chat.completions.create({
-        model: model,
+      const responsePayload = {
+        model,
         messages: [
           {
-            role: "system",
+            role: 'system',
             content: systemPrompt
           },
           {
-            role: "user",
+            role: 'user',
             content: truncatedContent
           }
         ],
-        temperature: 0.3,
-      });
+        temperature: 0.3
+      };
+
+      if (/^gpt-5/i.test(model)) {
+        responsePayload.reasoning_effort = process.env.AI_REASONING_EFFORT || 'low';
+      }
+
+      const response = await this.client.chat.completions.create(responsePayload);
 
       // Handle response
       //console.log(`MESSAGE: ${response?.choices?.[0]?.message?.content}`);
@@ -262,11 +275,11 @@ class CustomOpenAIService {
       : String(apiData);
 
     // Calculate tokens for the data
-    const dataTokens = await calculateTokens(dataString, config.custom.model);
+      const dataTokens = await calculateTokens(dataString, config.compatible.model || config.custom.model);
 
     if (dataTokens > maxTokens) {
       console.warn(`[WARNING] External API data (${dataTokens} tokens) exceeds limit (${maxTokens}), truncating`);
-      return await truncateToTokenLimit(dataString, maxTokens, config.custom.model);
+      return await truncateToTokenLimit(dataString, maxTokens, config.compatible.model || config.custom.model);
     }
 
     console.log(`[DEBUG] External API data validated: ${dataTokens} tokens`);
@@ -308,7 +321,7 @@ class CustomOpenAIService {
 
       // Make API request
       const response = await this.client.chat.completions.create({
-        model: config.custom.model,
+        model: config.compatible.model || config.custom.model,
         messages: [
           {
             role: "system",

@@ -4,6 +4,7 @@ const path = require('path');
 
 // Map non-OpenAI models to compatible OpenAI encodings or use estimation
 function getCompatibleModel(model) {
+    const normalizedModel = String(model || '').split('/').pop();
     const openaiModels = [
         // GPT-4o family
         'gpt-4o', 'chatgpt-4o-latest', 'gpt-4o-mini', 'gpt-4o-audio-preview',
@@ -31,8 +32,8 @@ function getCompatibleModel(model) {
     ];
     
     // If it's a known OpenAI model, return as-is
-    if (openaiModels.some(openaiModel => model.includes(openaiModel))) {
-        return model;
+    if (openaiModels.some(openaiModel => normalizedModel.includes(openaiModel))) {
+        return normalizedModel;
     }
     
     // For all other models (Llama, Claude, etc.), return null to use estimation

@@ -1,4 +1,9 @@
 const path = require('path');
+const {
+  getDefaultModel,
+  getEffectiveModel,
+  normalizeProvider
+} = require('../services/providerCatalogService');
 const currentDir = decodeURIComponent(process.cwd());
 const envPath = path.join(currentDir, 'data', '.env');
 console.log('Loading .env from:', envPath); // Debug log
@@ -52,7 +57,7 @@ console.log('Loaded environment variables:', {
 });
 
 module.exports = {
-  PAPERLESS_AI_VERSION: '3.0.9',
+  PAPERLESS_AI_VERSION: '4.0.0',
   CONFIGURED: false,
   disableAutomaticProcessing: process.env.DISABLE_AUTOMATIC_PROCESSING || 'no',
   predefinedMode: process.env.PROCESS_PREDEFINED_DOCUMENTS,
@@ -71,16 +76,27 @@ module.exports = {
     apiToken: process.env.PAPERLESS_API_TOKEN
   },
   openai: {
-    apiKey: process.env.OPENAI_API_KEY
+    apiKey: process.env.OPENAI_API_KEY,
+    model: process.env.OPENAI_MODEL || getDefaultModel('openai')
+  },
+  openrouter: {
+    apiKey: process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY || '',
+    model: process.env.OPENROUTER_MODEL || process.env.AI_MODEL || getDefaultModel('openrouter'),
+    baseUrl: process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1'
   },
   ollama: {
     apiUrl: process.env.OLLAMA_API_URL || 'http://localhost:11434',
-    model: process.env.OLLAMA_MODEL || 'llama3.2'
+    model: process.env.OLLAMA_MODEL || getDefaultModel('ollama')
+  },
+  compatible: {
+    apiUrl: process.env.COMPATIBLE_BASE_URL || process.env.CUSTOM_BASE_URL || '',
+    apiKey: process.env.COMPATIBLE_API_KEY || process.env.CUSTOM_API_KEY || '',
+    model: process.env.COMPATIBLE_MODEL || process.env.CUSTOM_MODEL || ''
   },
   custom: {
-    apiUrl: process.env.CUSTOM_BASE_URL || '',
-    apiKey: process.env.CUSTOM_API_KEY || '',
-    model: process.env.CUSTOM_MODEL || ''
+    apiUrl: process.env.COMPATIBLE_BASE_URL || process.env.CUSTOM_BASE_URL || '',
+    apiKey: process.env.COMPATIBLE_API_KEY || process.env.CUSTOM_API_KEY || '',
+    model: process.env.COMPATIBLE_MODEL || process.env.CUSTOM_MODEL || ''
   },
   azure: {
     apiKey: process.env.AZURE_API_KEY || '',
@@ -89,7 +105,8 @@ module.exports = {
     apiVersion: process.env.AZURE_API_VERSION || '2023-05-15'
   },
   customFields: process.env.CUSTOM_FIELDS || '',
-  aiProvider: process.env.AI_PROVIDER || 'openai',
+  aiProvider: normalizeProvider(process.env.AI_PROVIDER || 'openrouter'),
+  aiModel: getEffectiveModel(process.env),
   scanInterval: process.env.SCAN_INTERVAL || '*/30 * * * *',
   useExistingData: process.env.USE_EXISTING_DATA || 'no',
   // Add limit functions to config

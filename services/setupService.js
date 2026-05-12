@@ -4,6 +4,7 @@ const axios = require('axios');
 const { OpenAI } = require('openai');
 const config = require('../config/config');
 const AzureOpenAI = require('openai').AzureOpenAI;
+const { normalizeProvider } = require('./providerCatalogService');
 
 class SetupService {
   constructor() {
@@ -87,10 +88,38 @@ class SetupService {
     }
   }
 
+  async validateOpenRouterConfig(apiKey, model = 'openai/gpt-5.4-nano') {
+    if (!apiKey) {
+      return false;
+    }
+
+    try {
+      const openai = new OpenAI({
+        apiKey,
+        baseURL: process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1',
+        defaultHeaders: {
+          'HTTP-Referer': process.env.OPENROUTER_HTTP_REFERER || 'https://github.com/arturict/paperlesser',
+          'X-Title': 'paperlesser'
+        }
+      });
+
+      const response = await openai.chat.completions.create({
+        model,
+        messages: [{ role: 'user', content: 'Reply with the single word: ok' }],
+        max_tokens: 8
+      });
+
+      return !!response?.choices?.length;
+    } catch (error) {
+      console.error('OpenRouter validation error:', error.message);
+      return false;
+    }
+  }
+
   async validateCustomConfig(url, apiKey, model) {
     const config = {
       baseURL: url,
-      apiKey: apiKey,
+      apiKey: apiKey || 'paperlesser-compatible',
       model: model
     };
     console.log('Custom AI config:', config);
@@ -107,6 +136,16 @@ class SetupService {
     } catch (error) {
       console.error('Custom AI validation error:', error);
       return false;
+    }
+  }
+
+  async getOllamaModels(url) {
+    try {
+      const response = await axios.get(`${url.replace(/\/$/, '')}/api/tags`);
+      return Array.isArray(response.data?.models) ? response.data.models : [];
+    } catch (error) {
+      console.error('Failed to fetch Ollama models:', error.message);
+      return [];
     }
   }
 
@@ -164,11 +203,19 @@ class SetupService {
     }
 
     // Validate AI provider config
-    const aiProvider = config.AI_PROVIDER || 'openai';
+    const aiProvider = normalizeProvider(config.AI_PROVIDER || 'openrouter');
 
     console.log('AI provider:', aiProvider);
     
-    if (aiProvider === 'openai') {
+    if (aiProvider === 'openrouter') {
+      const openRouterValid = await this.validateOpenRouterConfig(
+        config.OPENROUTER_API_KEY || config.OPENAI_API_KEY,
+        config.OPENROUTER_MODEL || config.AI_MODEL || 'openai/gpt-5.4-nano'
+      );
+      if (!openRouterValid) {
+        throw new Error('Invalid OpenRouter configuration');
+      }
+    } else if (aiProvider === 'openai') {
       const openaiValid = await this.validateOpenAIConfig(config.OPENAI_API_KEY);
       if (!openaiValid) {
         throw new Error('Invalid OpenAI configuration');
@@ -181,14 +228,14 @@ class SetupService {
       if (!ollamaValid) {
         throw new Error('Invalid Ollama configuration');
       }
-    } else if (aiProvider === 'custom') {
+    } else if (aiProvider === 'compatible' || aiProvider === 'custom') {
       const customValid = await this.validateCustomConfig(
-        config.CUSTOM_BASE_URL,
-        config.CUSTOM_API_KEY,
-        config.CUSTOM_MODEL
+        config.COMPATIBLE_BASE_URL || config.CUSTOM_BASE_URL,
+        config.COMPATIBLE_API_KEY || config.CUSTOM_API_KEY,
+        config.COMPATIBLE_MODEL || config.CUSTOM_MODEL
       );
       if (!customValid) {
-        throw new Error('Invalid Custom AI configuration');
+        throw new Error('Invalid OpenAI-compatible AI configuration');
       }
     } else if (aiProvider === 'azure') {
       const azureValid = await this.validateAzureConfig(

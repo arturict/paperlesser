@@ -9,30 +9,48 @@ const config = require('../config/config');
 const paperlessService = require('./paperlessService');
 const fs = require('fs').promises;
 const path = require('path');
-const { model } = require('./ollamaService');
 const RestrictionPromptService = require('./restrictionPromptService');
+const { normalizeProvider } = require('./providerCatalogService');
 
 class OpenAIService {
   constructor() {
     this.client = null;
+    this.clientKey = null;
   }
 
   initialize() {
-    if (!this.client && config.aiProvider === 'ollama') {
+    const provider = normalizeProvider(config.aiProvider);
+
+    if (provider === 'ollama' && (!this.client || this.clientKey !== `${provider}:${config.ollama.apiUrl}`)) {
       this.client = new OpenAI({
         baseURL: config.ollama.apiUrl + '/v1',
         apiKey: 'ollama'
       });
-    } else if (!this.client && config.aiProvider === 'custom') {
+      this.clientKey = `${provider}:${config.ollama.apiUrl}`;
+    } else if (provider === 'compatible' && (!this.client || this.clientKey !== `${provider}:${config.compatible.apiUrl}`)) {
       this.client = new OpenAI({
-        baseURL: config.custom.apiUrl,
-        apiKey: config.custom.apiKey
+        baseURL: config.compatible.apiUrl,
+        apiKey: config.compatible.apiKey || 'paperlesser-compatible'
       });
-    } else if (!this.client && config.aiProvider === 'openai') {
-      if (!this.client && config.openai.apiKey) {
+      this.clientKey = `${provider}:${config.compatible.apiUrl}`;
+    } else if (provider === 'openrouter' && (!this.client || this.clientKey !== `${provider}:${config.openrouter.baseUrl}`)) {
+      if (config.openrouter.apiKey) {
+        this.client = new OpenAI({
+          apiKey: config.openrouter.apiKey,
+          baseURL: config.openrouter.baseUrl,
+          defaultHeaders: {
+            'HTTP-Referer': process.env.OPENROUTER_HTTP_REFERER || 'https://github.com/arturict/paperlesser',
+            'X-Title': 'paperlesser'
+          }
+        });
+        this.clientKey = `${provider}:${config.openrouter.baseUrl}`;
+      }
+    } else if (provider === 'openai' && (!this.client || this.clientKey !== provider)) {
+      if (config.openai.apiKey) {
         this.client = new OpenAI({
           apiKey: config.openai.apiKey
         });
+        this.clientKey = provider;
       }
     }
   }
@@ -84,7 +102,10 @@ class OpenAIService {
 
       let systemPrompt = '';
       let promptTags = '';
-      const model = process.env.OPENAI_MODEL;
+      const provider = normalizeProvider(config.aiProvider);
+      const model = provider === 'openrouter'
+        ? config.openrouter.model
+        : config.openai.model || process.env.OPENAI_MODEL;
 
       // Parse CUSTOM_FIELDS from environment variable
       let customFieldsObj;
@@ -175,20 +196,29 @@ class OpenAIService {
 
       await writePromptToFile(systemPrompt, truncatedContent);
 
-      const response = await this.client.chat.completions.create({
-        model: model,
+      const responsePayload = {
+        model,
         messages: [
           {
-            role: "system",
+            role: 'system',
             content: systemPrompt
           },
           {
-            role: "user",
+            role: 'user',
             content: truncatedContent
           }
-        ],
-        ...(model !== 'o3-mini' && { temperature: 0.3 }),
-      });
+        ]
+      };
+
+      if (!/^gpt-5/i.test(model) && !/^o[134]/i.test(model)) {
+        responsePayload.temperature = 0.3;
+      }
+
+      if (/^gpt-5/i.test(model)) {
+        responsePayload.reasoning_effort = process.env.AI_REASONING_EFFORT || 'low';
+      }
+
+      const response = await this.client.chat.completions.create(responsePayload);
 
       if (!response?.choices?.[0]?.message?.content) {
         throw new Error('Invalid API response structure');
@@ -299,20 +329,29 @@ class OpenAIService {
       const truncatedContent = await truncateToTokenLimit(content, availableTokens);
       const model = process.env.OPENAI_MODEL;
       // Make API request
-      const response = await this.client.chat.completions.create({
-        model: model,
+      const responsePayload = {
+        model,
         messages: [
           {
-            role: "system",
+            role: 'system',
             content: prompt + musthavePrompt
           },
           {
-            role: "user",
+            role: 'user',
             content: truncatedContent
           }
-        ],
-        ...(model !== 'o3-mini' && { temperature: 0.3 }),
-      });
+        ]
+      };
+
+      if (!/^gpt-5/i.test(model) && !/^o[134]/i.test(model)) {
+        responsePayload.temperature = 0.3;
+      }
+
+      if (/^gpt-5/i.test(model)) {
+        responsePayload.reasoning_effort = process.env.AI_REASONING_EFFORT || 'low';
+      }
+
+      const response = await this.client.chat.completions.create(responsePayload);
 
       // Handle response
       if (!response?.choices?.[0]?.message?.content) {
