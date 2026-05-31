@@ -10,6 +10,8 @@ const documentModel = require('../models/document.js');
 const AIServiceFactory = require('../services/aiServiceFactory');
 const debugService = require('../services/debugService.js');
 const configFile = require('../config/config.js');
+const ownerProfileService = require('../services/ownerProfileService');
+const onboardingService = require('../services/onboardingService');
 const fs = require('fs').promises;
 const path = require('path');
 const jwt = require('jsonwebtoken');
@@ -1173,8 +1175,8 @@ try {
             const result = await processDocument(doc, existingTagNames, existingCorrespondentList, existingDocumentTypesList, ownUserId);
             if (!result) continue;
     
-            const { analysis, originalData } = result;
-            const updateData = await buildUpdateData(analysis, doc);
+            const { analysis, originalData, content } = result;
+            const updateData = await buildUpdateData(analysis, doc, content);
             await saveDocumentChanges(doc.id, updateData, analysis, originalData);
           } catch (error) {
             console.error(`[ERROR] processing document ${doc.id}:`, error);
@@ -1253,10 +1255,10 @@ async function processDocument(doc, existingTags, existingCorrespondentList, exi
     throw new Error(`[ERROR] Document analysis failed: ${analysis.error}`);
   }
   await documentModel.setProcessingStatus(doc.id, doc.title, 'complete');
-  return { analysis, originalData };
+  return { analysis, originalData, content };
 }
 
-async function buildUpdateData(analysis, doc) {
+async function buildUpdateData(analysis, doc, content = '') {
   const updateData = {};
 
   // Create options object with restriction settings
@@ -1367,6 +1369,25 @@ async function buildUpdateData(analysis, doc) {
     updateData.language = analysis.document.language;
   }
 
+  if (config.activateOwnerAssignment !== 'no' && !doc.owner) {
+    try {
+      const users = await paperlessService.getUsers();
+      const ownerMatch = ownerProfileService.findOwnerMatch({
+        content,
+        analysis,
+        doc,
+        users,
+        rawProfiles: config.ownerProfiles
+      });
+      if (ownerMatch) {
+        updateData.owner = ownerMatch.id;
+        console.log(`[DEBUG] Assigned owner ${ownerMatch.username} to document ${doc.id} via profile match`, ownerMatch.matched);
+      }
+    } catch (error) {
+      console.error('[ERROR] Error assigning owner profile:', error.message);
+    }
+  }
+
   return updateData;
 }
 
@@ -1471,7 +1492,8 @@ router.post('/api/key-regenerate', async (req, res) => {
 
 
 function buildPageConfig() {
-  const config = buildUiConfig(process.env, configFile.PAPERLESS_AI_VERSION || '');
+  const onboardingDefaults = onboardingService.loadOnboardingDefaults();
+  const config = buildUiConfig({ ...onboardingDefaults, ...process.env }, configFile.PAPERLESS_AI_VERSION || '');
   config.SYSTEM_PROMPT = '';
   config.CUSTOM_FIELDS = process.env.CUSTOM_FIELDS || '{"custom_fields":[]}';
   return config;
@@ -1518,6 +1540,8 @@ function buildConfigForSave(payload, options = {}) {
     TAGS: serializeArray(payload.tags),
     ADD_AI_PROCESSED_TAG: parseBooleanFlag(payload.aiProcessedTag, currentConfig.ADD_AI_PROCESSED_TAG || 'no'),
     AI_PROCESSED_TAG_NAME: payload.aiTagName || currentConfig.AI_PROCESSED_TAG_NAME || 'ai-processed',
+    ACTIVATE_OWNER_ASSIGNMENT: parseBooleanFlag(payload.activateOwnerAssignment, currentConfig.ACTIVATE_OWNER_ASSIGNMENT || 'yes'),
+    OWNER_PROFILES: String(payload.ownerProfiles || currentConfig.OWNER_PROFILES || '').replace(/\r\n/g, '\n'),
     USE_EXISTING_DATA: parseBooleanFlag(payload.useExistingData, currentConfig.USE_EXISTING_DATA || 'no'),
     DISABLE_AUTOMATIC_PROCESSING: parseBooleanFlag(payload.disableAutomaticProcessing, currentConfig.DISABLE_AUTOMATIC_PROCESSING || 'no'),
     OPENROUTER_API_KEY: providerPayload.openrouterApiKey || currentConfig.OPENROUTER_API_KEY || '',
@@ -2277,8 +2301,8 @@ async function processQueue(customPrompt) {
         const result = await processDocument(doc, existingTags, existingCorrespondentList, existingDocumentTypesList, ownUserId, customPrompt);
         if (!result) continue;
 
-        const { analysis, originalData } = result;
-        const updateData = await buildUpdateData(analysis, doc);
+        const { analysis, originalData, content } = result;
+        const updateData = await buildUpdateData(analysis, doc, content);
         await saveDocumentChanges(doc.id, updateData, analysis, originalData);
       } catch (error) {
         console.error(`[ERROR] Failed to process document ${doc.id}:`, error);
@@ -3462,6 +3486,7 @@ router.post('/setup', express.json(), async (req, res) => {
 
     // Save configuration
     await setupService.saveConfig(config);
+    onboardingService.writeOnboardingSnapshot(config);
     const hashedPassword = await bcrypt.hash(password, 15);
     await documentModel.addUser(username, hashedPassword);
 
@@ -3811,6 +3836,7 @@ router.post('/settings', express.json(), async (req, res) => {
     });
 
     await setupService.saveConfig(mergedConfig);
+    onboardingService.writeOnboardingSnapshot(mergedConfig);
     try {
       for (const field of processedCustomFields) {
         await paperlessService.createCustomFieldSafely(field.value, field.data_type, field.currency);

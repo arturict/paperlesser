@@ -2,6 +2,7 @@ const path = require('path');
 const {
   getDefaultModel,
   getEffectiveModel,
+  normalizeOpenAIModel,
   normalizeProvider
 } = require('../services/providerCatalogService');
 const currentDir = decodeURIComponent(process.cwd());
@@ -57,7 +58,7 @@ console.log('Loaded environment variables:', {
 });
 
 module.exports = {
-  PAPERLESS_AI_VERSION: '4.0.0',
+  PAPERLESS_AI_VERSION: '4.1.0',
   CONFIGURED: false,
   disableAutomaticProcessing: process.env.DISABLE_AUTOMATIC_PROCESSING || 'no',
   predefinedMode: process.env.PROCESS_PREDEFINED_DOCUMENTS,
@@ -65,6 +66,8 @@ module.exports = {
   responseTokens: process.env.RESPONSE_TOKENS || 1000,
   addAIProcessedTag: process.env.ADD_AI_PROCESSED_TAG || 'no',
   addAIProcessedTags: process.env.AI_PROCESSED_TAG_NAME || 'ai-processed',
+  activateOwnerAssignment: parseEnvBoolean(process.env.ACTIVATE_OWNER_ASSIGNMENT, 'yes'),
+  ownerProfiles: process.env.OWNER_PROFILES || '',
   // AI restrictions config
   restrictToExistingTags: aiRestrictions.restrictToExistingTags,
   restrictToExistingCorrespondents: aiRestrictions.restrictToExistingCorrespondents,
@@ -77,7 +80,7 @@ module.exports = {
   },
   openai: {
     apiKey: process.env.OPENAI_API_KEY,
-    model: process.env.OPENAI_MODEL || getDefaultModel('openai')
+    model: normalizeOpenAIModel(process.env.OPENAI_MODEL || getDefaultModel('openai'))
   },
   openrouter: {
     apiKey: process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY || '',

@@ -67,6 +67,14 @@ const OPENROUTER_PRESETS = [
   }
 ];
 
+const OPENAI_DIRECT_MODELS = [
+  { slug: 'gpt-5.5', name: 'GPT-5.5' },
+  { slug: 'gpt-5.4', name: 'GPT-5.4' },
+  { slug: 'gpt-5.4-mini', name: 'GPT-5.4 Mini' },
+  { slug: 'gpt-5.4-nano', name: 'GPT-5.4 Nano' },
+  { slug: 'gpt-5.3', name: 'GPT-5.3' }
+];
+
 const PROVIDERS = [
   {
     id: 'openrouter',
@@ -93,9 +101,9 @@ const PROVIDERS = [
   {
     id: 'openai',
     name: 'OpenAI Direct',
-    description: 'Native OpenAI API without OpenRouter in the middle.',
+    description: 'Native OpenAI API with a locked, supported model list.',
     supportsModelDiscovery: false,
-    supportsCustomModelSlug: true
+    supportsCustomModelSlug: false
   },
   {
     id: 'azure',
@@ -110,9 +118,14 @@ const DEFAULT_MODELS = {
   openrouter: 'openai/gpt-5.4-nano',
   ollama: 'llama3.2',
   compatible: '',
-  openai: 'gpt-4o-mini',
+  openai: 'gpt-5.4-mini',
   azure: ''
 };
+
+function normalizeOpenAIModel(model) {
+  const allowed = new Set(OPENAI_DIRECT_MODELS.map((entry) => entry.slug));
+  return allowed.has(model) ? model : DEFAULT_MODELS.openai;
+}
 
 function normalizeProvider(provider) {
   if (!provider) return 'openrouter';
@@ -147,7 +160,7 @@ function getEffectiveModel(env = process.env) {
     case 'compatible':
       return env.COMPATIBLE_MODEL || env.CUSTOM_MODEL || env.AI_MODEL || getDefaultModel(provider);
     case 'openai':
-      return env.OPENAI_MODEL || env.AI_MODEL || getDefaultModel(provider);
+      return normalizeOpenAIModel(env.OPENAI_MODEL || env.AI_MODEL || getDefaultModel(provider));
     case 'azure':
       return env.AZURE_DEPLOYMENT_NAME || getDefaultModel(provider);
     default:
@@ -168,6 +181,7 @@ function buildCatalog(currentConfig = {}) {
       defaultModel: getDefaultModel(provider.id)
     })),
     openrouterPresets: OPENROUTER_PRESETS,
+    openaiDirectModels: OPENAI_DIRECT_MODELS,
     selectedProvider,
     effectiveModel,
     selectedPreset: getPresetBySlug(effectiveModel)
@@ -178,6 +192,7 @@ module.exports = {
   buildCatalog,
   getDefaultModel,
   getEffectiveModel,
+  normalizeOpenAIModel,
   getOpenRouterPresets,
   getPresetBySlug,
   getProviderList,

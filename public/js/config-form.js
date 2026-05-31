@@ -49,6 +49,7 @@ class ConfigFormApp {
     ['openrouterCustomModel', 'compatibleModel', 'openaiModel', 'ollamaCustomModel'].forEach((id) => {
       const input = document.getElementById(id);
       input?.addEventListener('input', () => this.syncModelValue());
+      input?.addEventListener('change', () => this.syncModelValue());
     });
 
     this.ollamaModelSelect?.addEventListener('change', () => {
@@ -79,7 +80,7 @@ class ConfigFormApp {
     }
 
     if (provider === 'openai') {
-      this.modelInput.value = document.getElementById('openaiModel')?.value.trim() || 'gpt-4o-mini';
+      this.modelInput.value = document.getElementById('openaiModel')?.value.trim() || 'gpt-5.4-mini';
       return;
     }
 

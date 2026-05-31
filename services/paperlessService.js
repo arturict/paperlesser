@@ -1220,7 +1220,7 @@ async getOrCreateDocumentType(name) {
       while (hasNextPage) {
         const response = await this.client.get('/users/', {
           params: {
-            fields: 'id,username',
+            fields: 'id,username,first_name,last_name,email',
             page,
             page_size: 100
           }

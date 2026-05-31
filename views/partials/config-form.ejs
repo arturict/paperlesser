@@ -4,7 +4,7 @@
   const submitLabel = isSetup ? 'Finish setup' : 'Save changes';
   const introTitle = isSetup ? 'Set up paperlesser' : 'Configuration';
   const introCopy = isSetup
-    ? 'Connect Paperless-ngx, choose your model stack, and tune what gets written back. Prompt editing is intentionally gone; the app now owns the classification prompt.'
+    ? 'Fast path: scan Paperless, paste one API token, choose a model, and start filing. Everything else can stay on smart defaults.'
     : 'Switch providers, refresh model choices, and control how aggressively paperlesser updates documents.';
 %>
 
@@ -29,7 +29,16 @@
 <% } %>
 
 <form id="configForm" class="stack" data-mode="<%= mode %>" data-action="<%= formAction %>">
-  <div class="hero stack">
+  <% if (isSetup) { %>
+  <div class="onboarding-strip">
+    <div class="onboarding-step is-active"><span>1</span><strong>Scan</strong><small>Find Paperless</small></div>
+    <div class="onboarding-step"><span>2</span><strong>Token</strong><small>Paste API key</small></div>
+    <div class="onboarding-step"><span>3</span><strong>Model</strong><small>Pick default</small></div>
+    <div class="onboarding-step"><span>4</span><strong>Run</strong><small>Auto-file docs</small></div>
+  </div>
+  <% } %>
+
+  <div class="hero stack cube-hero">
     <div>
       <p class="section-kicker">1. Paperless connection</p>
       <h2 style="margin:0.35rem 0 0.5rem;font-size:1.3rem;">Connect your Paperless-ngx instance</h2>
@@ -37,14 +46,14 @@
 
     <div class="form-grid">
       <div class="field">
-        <label for="paperlessUrl">Paperless URL</label>
+            <label for="paperlessUrl">Paperless URL</label>
         <input id="paperlessUrl" name="paperlessUrl" type="url" required value="<%= config.PAPERLESS_API_URL %>" placeholder="https://paperless.example.com">
         <p class="field-hint">Only the base URL. `/api` is added automatically.</p>
       </div>
 
       <div class="field">
         <label for="paperlessToken">API token</label>
-        <input id="paperlessToken" name="paperlessToken" type="password" required value="<%= config.PAPERLESS_API_TOKEN %>">
+            <input id="paperlessToken" name="paperlessToken" type="password" required value="<%= config.PAPERLESS_API_TOKEN %>" placeholder="Paste one Paperless API token">
         <p class="field-hint">
           <a id="openPaperlessTokenLink" href="#" target="_blank" rel="noopener" class="inline-link">
             <i class="fa-solid fa-up-right-from-square"></i> Open Paperless-ngx to copy your API token
@@ -79,8 +88,8 @@
   <% if (isSetup) { %>
   <div class="hero stack">
     <div>
-      <p class="section-kicker">2. Admin access</p>
-      <h2 style="margin:0.35rem 0 0.5rem;font-size:1.3rem;">Create a local admin</h2>
+      <p class="section-kicker">2. Local login</p>
+      <h2 style="margin:0.35rem 0 0.5rem;font-size:1.3rem;">Create a tiny local admin</h2>
     </div>
 
     <div class="form-grid">
@@ -224,7 +233,12 @@
 
           <div class="field">
             <label for="openaiModel">Model</label>
-            <input id="openaiModel" type="text" value="<%= config.OPENAI_MODEL %>" placeholder="gpt-4o-mini">
+            <select id="openaiModel">
+              <% providerCatalog.openaiDirectModels.forEach((model) => { %>
+              <option value="<%= model.slug %>" <%= config.OPENAI_MODEL === model.slug || providerCatalog.effectiveModel === model.slug ? 'selected' : '' %>><%= model.name %></option>
+              <% }) %>
+            </select>
+            <p class="field-hint">OpenAI Direct is intentionally locked to supported GPT-5.x models.</p>
           </div>
         </div>
       </section>
@@ -301,10 +315,16 @@
         <div class="choice-copy">Rewrite titles into something clearer.</div>
       </label>
 
-      <label class="choice-card <%= config.ACTIVATE_CUSTOM_FIELDS === 'yes' ? 'is-selected' : '' %>">
+        <label class="choice-card <%= config.ACTIVATE_CUSTOM_FIELDS === 'yes' ? 'is-selected' : '' %>">
         <input type="checkbox" name="activateCustomFields" <%= config.ACTIVATE_CUSTOM_FIELDS === 'yes' ? 'checked' : '' %> hidden>
         <div class="choice-title"><span>Custom fields</span></div>
         <div class="choice-copy">Populate your own Paperless custom fields.</div>
+      </label>
+
+      <label class="choice-card <%= config.ACTIVATE_OWNER_ASSIGNMENT === 'yes' ? 'is-selected' : '' %>">
+        <input type="checkbox" name="activateOwnerAssignment" <%= config.ACTIVATE_OWNER_ASSIGNMENT === 'yes' ? 'checked' : '' %> hidden>
+        <div class="choice-title"><span>Person assignment</span><span class="badge">Zero-config</span></div>
+        <div class="choice-copy">Assign docs to Paperless users when names like “artur” appear.</div>
       </label>
     </div>
 
@@ -355,7 +375,23 @@
 
   <div class="hero stack">
     <div>
-      <p class="section-kicker">5. Guardrails and extras</p>
+      <p class="section-kicker">5. People profiles</p>
+      <h2 style="margin:0.35rem 0 0.5rem;font-size:1.3rem;">Teach assignment without setup pain</h2>
+      <p class="field-hint">Leave blank for automatic matching from Paperless users (username, name, email). Add optional lines when you want aliases or hints.</p>
+    </div>
+
+    <div class="form-grid">
+      <div class="field field-wide">
+        <label for="ownerProfiles">Assignment profiles</label>
+        <textarea id="ownerProfiles" name="ownerProfiles" rows="7" placeholder="artur: Artur, Arthur, invoices for Artur, documents addressed to Artur&#10;nex: Nex, N. Example, personal docs"><%= config.OWNER_PROFILES %></textarea>
+        <p class="field-hint">Format: one profile per line, <code>username: alias, hint, keyword</code>. The username must match a Paperless user.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="hero stack">
+    <div>
+      <p class="section-kicker">6. Guardrails and extras</p>
       <h2 style="margin:0.35rem 0 0.5rem;font-size:1.3rem;">Restrict suggestions and enrich context</h2>
     </div>
 
@@ -424,7 +460,7 @@
 
   <div class="hero stack">
     <div>
-      <p class="section-kicker">6. Custom fields</p>
+      <p class="section-kicker">7. Custom fields</p>
       <h2 style="margin:0.35rem 0 0.5rem;font-size:1.3rem;">Structured metadata extraction</h2>
       <p class="field-hint">Define the Paperless custom fields you want AI to fill when it can confidently extract them.</p>
     </div>

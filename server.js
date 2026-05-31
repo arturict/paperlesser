@@ -14,6 +14,7 @@ const Logger = require('./services/loggerService');
 const { max } = require('date-fns');
 const swaggerUi = require('swagger-ui-express');
 const swaggerSpec = require('./swagger');
+const ownerProfileService = require('./services/ownerProfileService');
 
 const htmlLogger = new Logger({
   logFile: 'logs.html',
@@ -200,10 +201,10 @@ async function processDocument(doc, existingTags, existingCorrespondentList, exi
     throw new Error(`[ERROR] Document analysis failed: ${analysis.error}`);
   }
   await documentModel.setProcessingStatus(doc.id, doc.title, 'complete');
-  return { analysis, originalData };
+  return { analysis, originalData, content };
 }
 
-async function buildUpdateData(analysis, doc) {
+async function buildUpdateData(analysis, doc, content = '') {
   const updateData = {};
 
   console.log('TEST: ', config.addAIProcessedTag)
@@ -308,6 +309,25 @@ async function buildUpdateData(analysis, doc) {
     updateData.language = analysis.document.language;
   }
 
+  if (config.activateOwnerAssignment !== 'no' && !doc.owner) {
+    try {
+      const users = await paperlessService.getUsers();
+      const ownerMatch = ownerProfileService.findOwnerMatch({
+        content,
+        analysis,
+        doc,
+        users,
+        rawProfiles: config.ownerProfiles
+      });
+      if (ownerMatch) {
+        updateData.owner = ownerMatch.id;
+        console.log(`[DEBUG] Assigned owner ${ownerMatch.username} to document ${doc.id} via profile match`, ownerMatch.matched);
+      }
+    } catch (error) {
+      console.error('[ERROR] Error assigning owner profile:', error.message);
+    }
+  }
+
   return updateData;
 }
 
@@ -356,8 +376,8 @@ async function scanInitial() {
         const result = await processDocument(doc, existingTagNames, existingCorrespondentList, existingDocumentTypesList, ownUserId);
         if (!result) continue;
 
-        const { analysis, originalData } = result;
-        const updateData = await buildUpdateData(analysis, doc);
+        const { analysis, originalData, content } = result;
+        const updateData = await buildUpdateData(analysis, doc, content);
         await saveDocumentChanges(doc.id, updateData, analysis, originalData);
       } catch (error) {
         console.error(`[ERROR] processing document ${doc.id}:`, error);
@@ -398,8 +418,8 @@ async function scanDocuments() {
         const result = await processDocument(doc, existingTagNames, existingCorrespondentList, existingDocumentTypesList, ownUserId);
         if (!result) continue;
 
-        const { analysis, originalData } = result;
-        const updateData = await buildUpdateData(analysis, doc);
+        const { analysis, originalData, content } = result;
+        const updateData = await buildUpdateData(analysis, doc, content);
         await saveDocumentChanges(doc.id, updateData, analysis, originalData);
       } catch (error) {
         console.error(`[ERROR] processing document ${doc.id}:`, error);

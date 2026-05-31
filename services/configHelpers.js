@@ -1,4 +1,9 @@
-const { getDefaultModel, getEffectiveModel, normalizeProvider } = require('./providerCatalogService');
+const {
+  getDefaultModel,
+  getEffectiveModel,
+  normalizeOpenAIModel,
+  normalizeProvider
+} = require('./providerCatalogService');
 
 function normalizeArray(value) {
   if (!value) return [];
@@ -47,7 +52,7 @@ function buildUiConfig(env = process.env, version = '') {
     AI_PROVIDER: provider,
     AI_MODEL: env.AI_MODEL || effectiveModel,
     OPENAI_API_KEY: env.OPENAI_API_KEY || '',
-    OPENAI_MODEL: env.OPENAI_MODEL || getDefaultModel('openai'),
+    OPENAI_MODEL: normalizeOpenAIModel(env.OPENAI_MODEL || getDefaultModel('openai')),
     OPENROUTER_API_KEY: env.OPENROUTER_API_KEY || env.OPENAI_API_KEY || '',
     OPENROUTER_MODEL: env.OPENROUTER_MODEL || env.AI_MODEL || getDefaultModel('openrouter'),
     OLLAMA_API_URL: env.OLLAMA_API_URL || 'http://localhost:11434',
@@ -71,6 +76,8 @@ function buildUiConfig(env = process.env, version = '') {
     ACTIVATE_DOCUMENT_TYPE: parseBooleanFlag(env.ACTIVATE_DOCUMENT_TYPE, 'yes'),
     ACTIVATE_TITLE: parseBooleanFlag(env.ACTIVATE_TITLE, 'yes'),
     ACTIVATE_CUSTOM_FIELDS: parseBooleanFlag(env.ACTIVATE_CUSTOM_FIELDS, 'yes'),
+    ACTIVATE_OWNER_ASSIGNMENT: parseBooleanFlag(env.ACTIVATE_OWNER_ASSIGNMENT, 'yes'),
+    OWNER_PROFILES: env.OWNER_PROFILES || '',
     RESTRICT_TO_EXISTING_TAGS: parseBooleanFlag(env.RESTRICT_TO_EXISTING_TAGS, 'no'),
     RESTRICT_TO_EXISTING_CORRESPONDENTS: parseBooleanFlag(env.RESTRICT_TO_EXISTING_CORRESPONDENTS, 'no'),
     RESTRICT_TO_EXISTING_DOCUMENT_TYPES: parseBooleanFlag(env.RESTRICT_TO_EXISTING_DOCUMENT_TYPES, 'no'),
@@ -91,7 +98,7 @@ function buildUiConfig(env = process.env, version = '') {
 
 function normalizeProviderPayload(payload = {}) {
   const provider = normalizeProvider(payload.aiProvider || payload.AI_PROVIDER);
-  const selectedModel =
+  let selectedModel =
     payload.aiModel ||
     payload.openrouterModel ||
     payload.ollamaModel ||
@@ -104,6 +111,10 @@ function normalizeProviderPayload(payload = {}) {
     payload.OPENAI_MODEL ||
     payload.CUSTOM_MODEL ||
     getDefaultModel(provider);
+
+  if (provider === 'openai') {
+    selectedModel = normalizeOpenAIModel(selectedModel);
+  }
 
   return {
     provider,
