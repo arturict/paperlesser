@@ -3,16 +3,16 @@ const swaggerJSDoc = require('swagger-jsdoc');
 const swaggerDefinition = {
   openapi: '3.0.0',
   info: {
-    title: 'Paperless-AI API Documentation',
-    version: '1.0.0',
-    description: 'API documentation for the Paperless-AI application',
+    title: 'paperlesser API Documentation',
+    version: '4.0.0',
+    description: 'API documentation for the paperlesser application',
     license: {
       name: 'MIT',
       url: 'https://opensource.org/licenses/MIT',
     },
     contact: {
-      name: 'Clusterzx',
-      url: 'https://github.com/Clusterzx',
+      name: 'arturict',
+      url: 'https://github.com/arturict',
     },
   },
   servers: [

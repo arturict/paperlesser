@@ -8,10 +8,6 @@ const AIServiceFactory = require('./services/aiServiceFactory');
 const documentModel = require('./models/document');
 const setupService = require('./services/setupService');
 const setupRoutes = require('./routes/setup');
-
-// Add environment variables for RAG service if not already set
-process.env.RAG_SERVICE_URL = process.env.RAG_SERVICE_URL || 'http://localhost:8000';
-process.env.RAG_SERVICE_ENABLED = process.env.RAG_SERVICE_ENABLED || 'true';
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const Logger = require('./services/loggerService');
@@ -80,9 +76,7 @@ app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
  *   get:
  *     summary: Retrieve the OpenAPI specification
  *     description: |
- *       Returns the complete OpenAPI specification for the Paperless-AI API.
- *       This endpoint attempts to serve a static OpenAPI JSON file first, falling back
- *       to dynamically generating the specification if the file cannot be read.
+ *       Returns the complete OpenAPI specification for the paperlesser API.
  *       
  *       The OpenAPI specification document contains all API endpoints, parameters,
  *       request bodies, responses, and schemas for the entire application.
@@ -109,19 +103,8 @@ app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
  *               $ref: '#/components/schemas/Error'
  */
 app.get('/api-docs/openapi.json', (req, res) => {
-  const openApiPath = path.join(process.cwd(), 'OPENAPI', 'openapi.json');
   res.setHeader('Content-Type', 'application/json');
-  
-  // Try to serve the static file first
-  fs.readFile(openApiPath)
-    .then(data => {
-      res.send(JSON.parse(data));
-    })
-    .catch(err => {
-      console.warn('Error reading OpenAPI file, generating dynamically:', err.message);
-      // Fallback to generating the spec if file can't be read
-      res.send(swaggerSpec);
-    });
+  res.send(swaggerSpec);
 });
 
 // Add a redirect for the old endpoint for backward compatibility
@@ -432,25 +415,6 @@ async function scanDocuments() {
 
 // Routes
 app.use('/', setupRoutes);
-const authRoutes = require('./routes/auth');
-const ragRoutes = require('./routes/rag');
-
-// Mount RAG routes if enabled
-if (process.env.RAG_SERVICE_ENABLED === 'true') {
-  app.use('/api/rag', ragRoutes);
-  
-  // RAG UI route
-  app.get('/rag', async (req, res) => {
-    try {
-      res.render('rag', { 
-        title: 'Dokumenten-Fragen'
-      });
-    } catch (error) {
-      console.error('Error rendering RAG UI:', error);
-      res.status(500).send('Error loading RAG interface');
-    }
-  });
-}
 
 /**
  * @swagger

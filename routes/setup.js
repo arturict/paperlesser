@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const axios = require('axios');
 const setupService = require('../services/setupService.js');
 const paperlessService = require('../services/paperlessService.js');
 const openaiService = require('../services/openaiService.js');
@@ -9,9 +10,6 @@ const documentModel = require('../models/document.js');
 const AIServiceFactory = require('../services/aiServiceFactory');
 const debugService = require('../services/debugService.js');
 const configFile = require('../config/config.js');
-const ChatService = require('../services/chatService.js');
-const documentsService = require('../services/documentsService.js');
-const RAGService = require('../services/ragService.js');
 const fs = require('fs').promises;
 const path = require('path');
 const jwt = require('jsonwebtoken');
@@ -148,7 +146,11 @@ let PUBLIC_ROUTES = [
   '/health',
   '/login',
   '/logout',
-  '/setup'
+  '/setup',
+  // Paperless-ngx discovery/probe: needed during onboarding before an admin exists.
+  // These are still gated by the allowDuringSetup middleware (auth required once configured).
+  '/api/paperless/discover',
+  '/api/paperless/probe'
 ];
 
 // Combined middleware to check authentication and setup
@@ -182,11 +184,17 @@ router.use(async (req, res, next) => {
   // Setup check
   try {
     const isConfigured = await setupService.isConfigured();
- 
-    if (!isConfigured && (!process.env.PAPERLESS_AI_INITIAL_SETUP || process.env.PAPERLESS_AI_INITIAL_SETUP === 'no') && !req.path.startsWith('/setup')) {
-      return res.redirect('/setup');
-    } else if (!isConfigured && process.env.PAPERLESS_AI_INITIAL_SETUP === 'yes' && !req.path.startsWith('/settings')) {
-      return res.redirect('/settings');
+
+    // API and health endpoints must never be redirected to an HTML page; they
+    // return JSON and handle their own auth/setup gating (e.g. allowDuringSetup).
+    const isApiRequest = req.path.startsWith('/api/') || req.path === '/health';
+
+    if (!isApiRequest) {
+      if (!isConfigured && (!process.env.PAPERLESS_AI_INITIAL_SETUP || process.env.PAPERLESS_AI_INITIAL_SETUP === 'no') && !req.path.startsWith('/setup')) {
+        return res.redirect('/setup');
+      } else if (!isConfigured && process.env.PAPERLESS_AI_INITIAL_SETUP === 'yes' && !req.path.startsWith('/settings')) {
+        return res.redirect('/settings');
+      }
     }
   } catch (error) {
     console.error('Error checking setup configuration:', error);
@@ -213,13 +221,45 @@ const protectApiRoute = (req, res, next) => {
   }
 };
 
+// Allow a route either when the request carries a valid JWT, or while the app is
+// still in initial-setup state (no admin configured yet). Used for Paperless discovery
+// so the onboarding flow can scan for instances before an admin account exists.
+const allowDuringSetup = async (req, res, next) => {
+  const token = req.cookies.jwt || req.headers.authorization?.split(' ')[1];
+  if (token) {
+    try {
+      req.user = jwt.verify(token, JWT_SECRET);
+      return next();
+    } catch (error) {
+      // fall through to setup-mode check
+    }
+  }
+  try {
+    const isConfigured = await setupService.isConfigured();
+    if (!isConfigured) {
+      return next();
+    }
+  } catch (error) {
+    // ignore and reject below
+  }
+  return res.status(401).json({ success: false, error: 'Authentication required' });
+};
+
+const retiredUiRoute = (target) => (req, res) => {
+  res.redirect(target);
+};
+
+const retiredApiRoute = (message) => (req, res) => {
+  res.status(410).json({ error: message });
+};
+
 /**
  * @swagger
  * /login:
  *   get:
  *     summary: Render login page or redirect to setup if no users exist
  *     description: |
- *       Serves the login page for user authentication to the Paperless-AI application.
+ *       Serves the login page for user authentication to the paperlesser application.
  *       If no users exist in the database, the endpoint automatically redirects to the setup page
  *       to complete the initial application configuration.
  *       
@@ -503,73 +543,7 @@ router.get('/sampleData/:id', async (req, res) => {
   }
 });
 
-// Documents view route
-/**
- * @swagger
- * /playground:
- *   get:
- *     summary: AI playground testing environment
- *     description: |
- *       Renders the AI playground page for experimenting with document analysis.
- *       
- *       This interactive environment allows users to test different AI providers and prompts
- *       on document content without affecting the actual document processing workflow.
- *       Users can paste document text, customize prompts, and see raw AI responses
- *       to better understand how the AI models analyze document content.
- *       
- *       The playground is useful for fine-tuning prompts and testing AI capabilities
- *       before applying them to actual document processing.
- *     tags:
- *       - Navigation
- *       - Documents
- *     security:
- *       - BearerAuth: []
- *     responses:
- *       200:
- *         description: Playground page rendered successfully
- *         content:
- *           text/html:
- *             schema:
- *               type: string
- *               description: HTML content of the AI playground interface
- *       401:
- *         description: Unauthorized - user not authenticated
- *         headers:
- *           Location:
- *             schema:
- *               type: string
- *               example: "/login"
- *       500:
- *         description: Server error
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Error'
- */
-router.get('/playground', protectApiRoute, async (req, res) => {
-  try {
-    const {
-      documents,
-      tagNames,
-      correspondentNames,
-      paperlessUrl
-    } = await documentsService.getDocumentsWithMetadata();
-
-    //limit documents to 16 items
-    documents.length = 16;
-
-    res.render('playground', {
-      documents,
-      tagNames,
-      correspondentNames,
-      paperlessUrl,
-      version: configFile.PAPERLESS_AI_VERSION || ' '
-    });
-  } catch (error) {
-    console.error('[ERRO] loading documents view:', error);
-    res.status(500).send('Error loading documents');
-  }
-});
+router.get('/playground', protectApiRoute, retiredUiRoute('/manual'));
 
 /**
  * @swagger
@@ -659,347 +633,10 @@ router.get('/thumb/:documentId', async (req, res) => {
   }
 });
 
-// Hauptseite mit Dokumentenliste
-/**
- * @swagger
- * /chat:
- *   get:
- *     summary: Chat interface page
- *     description: |
- *       Renders the chat interface page where users can interact with document-specific AI assistants.
- *       This page displays a list of available documents and the chat interface for the selected document.
- *     tags: 
- *       - Navigation
- *       - Chat
- *     parameters:
- *       - in: query
- *         name: open
- *         schema:
- *           type: string
- *         description: ID of document to open immediately in chat
- *         required: false
- *     security:
- *       - BearerAuth: []
- *     responses:
- *       200:
- *         description: Chat interface page rendered successfully
- *         content:
- *           text/html:
- *             schema:
- *               type: string
- *       401:
- *         description: Authentication required
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Error'
- *       403:
- *         description: Invalid or expired token
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Error'
- *       500:
- *         description: Server error
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Error'
- */
-router.get('/chat', async (req, res) => {
-  try {
-      const {open} = req.query;
-      const documents = await paperlessService.getDocuments();
-      const version = configFile.PAPERLESS_AI_VERSION || ' ';
-      res.render('chat', { documents, open, version });
-  } catch (error) {
-    console.error('[ERRO] loading documents:', error);
-    res.status(500).send('Error loading documents');
-  }
-});
-
-/**
- * @swagger
- * /chat/init:
- *   get:
- *     summary: Initialize chat for a document via query parameter
- *     description: |
- *       Initializes a chat session for a specific document identified by the query parameter.
- *       Loads document content and prepares it for the chat interface.
- *       This endpoint returns the document content, chat history if available, and initial context.
- *     tags: 
- *       - API
- *       - Chat
- *     parameters:
- *       - in: query
- *         name: documentId
- *         required: true
- *         schema:
- *           type: string
- *         description: ID of the document to initialize chat for
- *         example: "123"
- *     security:
- *       - BearerAuth: []
- *     responses:
- *       200:
- *         description: Chat session initialized successfully
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 documentId:
- *                   type: string
- *                   description: ID of the document
- *                   example: "123"
- *                 content:
- *                   type: string
- *                   description: Content of the document
- *                   example: "This is the document content"
- *                 title:
- *                   type: string
- *                   description: Title of the document
- *                   example: "Invoice #12345"
- *                 history:
- *                   type: array
- *                   description: Previous chat messages if any
- *                   items:
- *                     type: object
- *                     properties:
- *                       role:
- *                         type: string
- *                         example: "user"
- *                       content:
- *                         type: string
- *                         example: "What is this document about?"
- *       400:
- *         description: Missing document ID
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Error'
- *       401:
- *         description: Authentication required
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Error'
- *       403:
- *         description: Invalid or expired token
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Error'
- *       404:
- *         description: Document not found
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Error'
- *       500:
- *         description: Server error
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Error'
- */
-router.get('/chat/init', async (req, res) => {
-  const documentId = req.query.documentId;
-  const result = await ChatService.initializeChat(documentId);
-  res.json(result);
-});
-
-// Nachricht senden
-/**
- * @swagger
- * /chat/message:
- *   post:
- *     summary: Send message to document chat
- *     description: |
- *       Sends a user message to the document-specific chat AI assistant.
- *       The message is processed in the context of the specified document.
- *       Returns a streaming response with the AI's reply chunks.
- *     tags: 
- *       - API
- *       - Chat
- *     security:
- *       - BearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - documentId
- *               - message
- *             properties:
- *               documentId:
- *                 type: string
- *                 description: ID of the document to chat with
- *                 example: "123"
- *               message:
- *                 type: string
- *                 description: User message to send to the chat
- *                 example: "What is this document about?"
- *     responses:
- *       200:
- *         description: |
- *           Response streaming started. Each event contains a message chunk.
- *         content:
- *           text/event-stream:
- *             schema:
- *               type: string
- *               example: |
- *                 data: {"chunk":"This document appears to be"}
- *                 
- *                 data: {"chunk":" an invoice from"}
- *                 
- *                 data: {"done":true}
- *       400:
- *         description: Missing document ID or message
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Error'
- *       401:
- *         description: Authentication required
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Error'
- *       403:
- *         description: Invalid or expired token
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Error'
- *       404:
- *         description: Document not found
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Error'
- *       500:
- *         description: Server error
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Error'
- */
-router.post('/chat/message', async (req, res) => {
-  try {
-    const { documentId, message } = req.body;
-    if (!documentId || !message) {
-      return res.status(400).json({ error: 'Document ID and message are required' });
-    }
-    
-    // Use the new streaming method
-    await ChatService.sendMessageStream(documentId, message, res);
-  } catch (error) {
-    console.error('Chat message error:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-/**
- * @swagger
- * /chat/init/{documentId}:
- *   get:
- *     summary: Initialize chat for a document via path parameter
- *     description: |
- *       Initializes a chat session for a specific document identified by the path parameter.
- *       Loads document content and prepares it for the chat interface.
- *       This endpoint returns the document content, chat history if available, and initial context.
- *     tags: 
- *       - API
- *       - Chat
- *     parameters:
- *       - in: path
- *         name: documentId
- *         required: true
- *         schema:
- *           type: string
- *         description: ID of the document to initialize chat for
- *         example: "123"
- *     security:
- *       - BearerAuth: []
- *     responses:
- *       200:
- *         description: Chat session initialized successfully
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 documentId:
- *                   type: string
- *                   description: ID of the document
- *                   example: "123"
- *                 content:
- *                   type: string
- *                   description: Content of the document
- *                   example: "This is the document content"
- *                 title:
- *                   type: string
- *                   description: Title of the document
- *                   example: "Invoice #12345"
- *                 history:
- *                   type: array
- *                   description: Previous chat messages if any
- *                   items:
- *                     type: object
- *                     properties:
- *                       role:
- *                         type: string
- *                         example: "user"
- *                       content:
- *                         type: string
- *                         example: "What is this document about?"
- *       400:
- *         description: Missing document ID
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Error'
- *       401:
- *         description: Authentication required
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Error'
- *       403:
- *         description: Invalid or expired token
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Error'
- *       404:
- *         description: Document not found
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Error'
- *       500:
- *         description: Server error
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Error'
- */
-router.get('/chat/init/:documentId', async (req, res) => {
-  try {
-      const { documentId } = req.params;
-      if (!documentId) {
-          return res.status(400).json({ error: 'Document ID is required' });
-      }
-      const result = await ChatService.initializeChat(documentId);
-      res.json(result);
-  } catch (error) {
-      console.error('[ERRO] initializing chat:', error);
-      res.status(500).json({ error: 'Failed to initialize chat' });
-  }
-});
+router.get('/chat', protectApiRoute, retiredUiRoute('/manual'));
+router.get('/chat/init', protectApiRoute, retiredApiRoute('Document chat has been removed. Use manual review instead.'));
+router.post('/chat/message', protectApiRoute, retiredApiRoute('Document chat has been removed. Use manual review instead.'));
+router.get('/chat/init/:documentId', protectApiRoute, retiredApiRoute('Document chat has been removed. Use manual review instead.'));
 
 /**
  * @swagger
@@ -1008,7 +645,7 @@ router.get('/chat/init/:documentId', async (req, res) => {
  *     summary: Document history page
  *     description: |
  *       Renders the document history page with filtering options.
- *       This page displays a list of all documents that have been processed by Paperless-AI,
+ *       This page displays a list of all documents that have been processed by paperlesser,
  *       showing the changes made to the documents through AI processing.
  *       
  *       The page includes filtering capabilities by correspondent, tag, and free text search,
@@ -1071,7 +708,7 @@ router.get('/history', async (req, res) => {
  *   get:
  *     summary: Get processed document history
  *     description: |
- *       Returns a paginated list of documents that have been processed by Paperless-AI.
+ *       Returns a paginated list of documents that have been processed by paperlesser.
  *       Supports filtering by tag, correspondent, and search term.
  *       Designed for integration with DataTables jQuery plugin.
  *       
@@ -1305,7 +942,7 @@ router.get('/api/history', async (req, res) => {
  *     summary: Reset all processed documents
  *     description: |
  *       Deletes all processing records from the database, allowing documents to be processed again.
- *       This doesn't delete the actual documents from Paperless-ngx, only their processing status in Paperless-AI.
+ *       This doesn't delete the actual documents from Paperless-ngx, only their processing status in paperlesser.
  *       
  *       This operation can be useful when changing AI models or prompts, as it allows reprocessing
  *       all documents with the updated configuration.
@@ -1365,7 +1002,7 @@ router.post('/api/reset-all-documents', async (req, res) => {
  *     summary: Reset specific documents
  *     description: |
  *       Deletes processing records for specific documents, allowing them to be processed again.
- *       This doesn't delete the actual documents from Paperless-ngx, only their processing status in Paperless-AI.
+ *       This doesn't delete the actual documents from Paperless-ngx, only their processing status in paperlesser.
  *       
  *       This operation is useful when you want to reprocess only selected documents after changes to
  *       the AI model, prompt, or document metadata configuration.
@@ -1843,7 +1480,12 @@ function buildPageConfig() {
 function buildViewModel(config) {
   return {
     config,
-    providerCatalog: providerCatalogService.buildCatalog(config)
+    providerCatalog: providerCatalogService.buildCatalog(config),
+    // Safe defaults so setup/settings EJS templates never hit a ReferenceError.
+    // Callers can override any of these via the render() options object.
+    success: null,
+    error: null,
+    settingsError: null
   };
 }
 
@@ -2108,8 +1750,21 @@ router.get('/manual/preview/:id', async (req, res) => {
       return tagName;
     }
     ));
-    console.log('Document Data:', document);
-    res.json({ content: document.content, title: document.title, id: document.id, tags: document.tags });
+    const correspondent = document.correspondent
+      ? await paperlessService.getCorrespondentNameById(document.correspondent)
+      : null;
+    const owner = document.owner ? { id: document.owner } : null;
+
+    res.json({
+      content: document.content,
+      title: document.title,
+      id: document.id,
+      tags: document.tags,
+      correspondent,
+      documentType: document.document_type || null,
+      owner,
+      originalDocument: document
+    });
   } catch (error) {
     console.error('Content fetch error:', error);
     res.status(500).json({ error: `Error fetching document content: ${error.message}` });
@@ -2159,6 +1814,11 @@ router.get('/manual/preview/:id', async (req, res) => {
  */
 router.get('/manual', async (req, res) => {
   const version = configFile.PAPERLESS_AI_VERSION || ' ';
+  const [correspondents, documentTypes, users] = await Promise.all([
+    paperlessService.listCorrespondentsNames(),
+    paperlessService.listDocumentTypesNames(),
+    paperlessService.getUsers()
+  ]);
   res.render('manual', {
     title: 'Document Review',
     error: null,
@@ -2166,7 +1826,10 @@ router.get('/manual', async (req, res) => {
     version,
     paperlessUrl: process.env.PAPERLESS_API_URL,
     paperlessToken: process.env.PAPERLESS_API_TOKEN,
-    config: {}
+    config: {},
+    correspondents,
+    documentTypes,
+    users
   });
 });
 
@@ -2284,6 +1947,165 @@ router.get('/api/ollama/models', async (req, res) => {
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
+});
+
+/**
+ * Normalize a user-supplied Paperless URL to a clean base URL (no trailing slash, no /api).
+ */
+function normalizePaperlessBaseUrl(raw) {
+  if (!raw) return null;
+  let url = String(raw).trim();
+  if (!/^https?:\/\//i.test(url)) {
+    url = `http://${url}`;
+  }
+  url = url.replace(/\/+$/, '');
+  url = url.replace(/\/api$/i, '');
+  return url;
+}
+
+/**
+ * Probe a single base URL to see if it is a Paperless-ngx instance.
+ *
+ * Paperless-ngx is detected via several independent signals, because depending
+ * on version / reverse-proxy / auth config a single signal is not always present:
+ *   1. `x-version` / `x-api-version` response headers (classic fingerprint).
+ *   2. The unauthenticated `/api/` root redirecting to the DRF schema view.
+ *   3. A DRF-style 401/403 on a well-known API endpoint (statistics/ui_settings),
+ *      which means the instance is up but token-gated.
+ *   4. A JSON API root listing the usual Paperless resources.
+ */
+async function probePaperlessInstance(baseUrl, timeout = 2500) {
+  const url = normalizePaperlessBaseUrl(baseUrl);
+  if (!url) return { url: baseUrl, ok: false };
+
+  const get = (path) => axios.get(`${url}${path}`, {
+    timeout,
+    validateStatus: () => true,
+    maxRedirects: 0,
+    headers: { Accept: 'application/json' }
+  });
+
+  try {
+    const response = await get('/api/');
+    const headers = response.headers || {};
+    const version = headers['x-version'] || null;
+    const apiVersion = headers['x-api-version'] || null;
+    const location = headers['location'] || '';
+
+    // Signal 1 + 4: header fingerprint or JSON resource listing.
+    let looksLikePaperless = Boolean(
+      version ||
+      apiVersion ||
+      (response.data && typeof response.data === 'object' &&
+        ('documents' in response.data || 'correspondents' in response.data || 'tags' in response.data))
+    );
+
+    // Signal 2: /api/ redirects to the DRF schema view (Paperless-ngx behaviour).
+    if (!looksLikePaperless && response.status >= 300 && response.status < 400 &&
+        /schema/i.test(location)) {
+      looksLikePaperless = true;
+    }
+
+    // Signal 3: a token-gated DRF endpoint confirms a live Paperless API.
+    let requiresAuth = response.status === 401 || response.status === 403;
+    if (!looksLikePaperless || version === null) {
+      for (const probePath of ['/api/ui_settings/', '/api/statistics/']) {
+        const probe = await get(probePath);
+        const pv = (probe.headers || {})['x-version'] ||
+                   (probe.headers || {})['x-api-version'] || null;
+        if (pv && !version) {
+          looksLikePaperless = true;
+        }
+        if (probe.status === 401 || probe.status === 403) {
+          looksLikePaperless = true;
+          requiresAuth = true;
+        }
+        if (probe.status === 200 && probe.data && typeof probe.data === 'object') {
+          looksLikePaperless = true;
+        }
+        if (looksLikePaperless) break;
+      }
+    }
+
+    return {
+      url,
+      ok: looksLikePaperless,
+      status: response.status,
+      version,
+      apiVersion,
+      requiresAuth
+    };
+  } catch (error) {
+    return { url, ok: false, error: error.code || error.message };
+  }
+}
+
+/**
+ * Build a candidate list of base URLs to probe for Paperless-ngx auto-discovery.
+ */
+function buildDiscoveryCandidates(hint) {
+  const candidates = new Set();
+  const add = (u) => {
+    const n = normalizePaperlessBaseUrl(u);
+    if (n) candidates.add(n);
+  };
+
+  // Anything the user already typed / has configured.
+  add(hint);
+  add(process.env.PAPERLESS_API_URL);
+
+  // Common container/service names on the same docker/compose network.
+  ['paperless', 'paperless-ngx', 'paperless-webserver', 'webserver', 'paperlessngx']
+    .forEach((host) => { add(`http://${host}:8000`); });
+
+  // Common local defaults.
+  ['http://localhost:8000', 'http://127.0.0.1:8000', 'http://host.docker.internal:8000']
+    .forEach(add);
+
+  // If the hint points at a host, also try the standard Paperless port on that host.
+  const n = normalizePaperlessBaseUrl(hint);
+  if (n) {
+    try {
+      const u = new URL(n);
+      add(`${u.protocol}//${u.hostname}:8000`);
+      add(`${u.protocol}//${u.hostname}`);
+    } catch (_) { /* ignore */ }
+  }
+
+  return Array.from(candidates);
+}
+
+/**
+ * POST /api/paperless/discover
+ * Scans a curated set of candidate URLs (plus an optional hint) for reachable
+ * Paperless-ngx instances and returns the ones that respond with the Paperless fingerprint.
+ */
+router.post('/api/paperless/discover', allowDuringSetup, express.json(), async (req, res) => {
+  try {
+    const hint = (req.body && req.body.hint) || (req.query && req.query.hint) || '';
+    const candidates = buildDiscoveryCandidates(hint);
+    const results = await Promise.all(candidates.map((url) => probePaperlessInstance(url)));
+    const instances = results
+      .filter((r) => r.ok)
+      // de-duplicate by normalized url
+      .filter((r, i, arr) => arr.findIndex((x) => x.url === r.url) === i);
+    res.json({ success: true, scanned: candidates.length, instances });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * GET /api/paperless/probe?url=...
+ * Probes a single URL on demand (used by the "Test connection" / quick-add UI).
+ */
+router.get('/api/paperless/probe', allowDuringSetup, async (req, res) => {
+  const url = req.query.url;
+  if (!url) {
+    return res.status(400).json({ success: false, error: 'url query parameter is required' });
+  }
+  const result = await probePaperlessInstance(url);
+  res.json({ success: result.ok, instance: result });
 });
 
 /**
@@ -2480,7 +2302,7 @@ async function processQueue(customPrompt) {
  *     summary: Webhook for document updates
  *     description: |
  *       Processes incoming webhook notifications from Paperless-ngx about document
- *       changes, additions, or deletions. The webhook allows Paperless-AI to respond
+ *       changes, additions, or deletions. The webhook allows paperlesser to respond
  *       to document changes in real-time.
  *       
  *       When a new document is added or updated in Paperless-ngx, this endpoint can
@@ -3049,156 +2871,35 @@ router.post('/manual/analyze', express.json(), async (req, res) => {
       return res.status(400).json({ error: 'Valid content string is required' });
     }
 
-    if (process.env.AI_PROVIDER === 'openai') {
-      const analyzeDocument = await openaiService.analyzeDocument(content, existingTagsList, existingCorrespondentList, existingDocumentTypesList, id || []);
-      await documentModel.addOpenAIMetrics(
-            id, 
-            analyzeDocument.metrics.promptTokens,
-            analyzeDocument.metrics.completionTokens,
-            analyzeDocument.metrics.totalTokens
-          )
-      return res.json(analyzeDocument);
-    } else if (process.env.AI_PROVIDER === 'ollama') {
-      const analyzeDocument = await ollamaService.analyzeDocument(content, existingTagsList, existingCorrespondentList, existingDocumentTypesList, id || []);
-      return res.json(analyzeDocument);
-    } else if (process.env.AI_PROVIDER === 'custom') {
-      const analyzeDocument = await customService.analyzeDocument(content, existingTagsList, existingCorrespondentList, existingDocumentTypesList, id || []);
-      return res.json(analyzeDocument);
-    } else if (process.env.AI_PROVIDER === 'azure') {
-      const analyzeDocument = await azureService.analyzeDocument(content, existingTagsList, existingCorrespondentList, existingDocumentTypesList, id || []);
-      return res.json(analyzeDocument);
-    } else {
+    const aiService = AIServiceFactory.getService();
+    if (!aiService || typeof aiService.analyzeDocument !== 'function') {
       return res.status(500).json({ error: 'AI provider not configured' });
     }
+
+    const analyzeDocument = await aiService.analyzeDocument(content, existingTagsList, existingCorrespondentList, existingDocumentTypesList, id || []);
+
+    // Persist token metrics when the active provider reports them (OpenAI/OpenRouter compatible).
+    if (id && analyzeDocument && analyzeDocument.metrics) {
+      try {
+        await documentModel.addOpenAIMetrics(
+          id,
+          analyzeDocument.metrics.promptTokens,
+          analyzeDocument.metrics.completionTokens,
+          analyzeDocument.metrics.totalTokens
+        );
+      } catch (metricsError) {
+        console.warn('Could not persist token metrics:', metricsError.message);
+      }
+    }
+
+    return res.json(analyzeDocument);
   } catch (error) {
     console.error('Analysis error:', error);
     return res.status(500).json({ error: error.message });
   }
 });
 
-/**
- * @swagger
- * /manual/playground:
- *   post:
- *     summary: Process document using a custom prompt in playground mode
- *     description: |
- *       Analyzes document content using a custom user-provided prompt.
- *       This endpoint is primarily used for testing and experimenting with different prompts
- *       without affecting the actual document processing workflow.
- *       
- *       The analysis is performed using the AI provider configured in the application settings,
- *       but with a custom prompt that overrides the default system prompt.
- *     tags:
- *       - Documents
- *       - API
- *     security:
- *       - BearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - content
- *             properties:
- *               content:
- *                 type: string
- *                 description: The document text content to analyze
- *                 example: "Invoice from Acme Corp. Total amount: $125.00, Due date: 2023-08-15"
- *               prompt:
- *                 type: string
- *                 description: Custom prompt to use for analysis
- *                 example: "Extract the company name, invoice amount, and due date from this document."
- *               documentId:
- *                 type: string
- *                 description: Optional document ID for tracking metrics
- *                 example: "doc_123"
- *     responses:
- *       200:
- *         description: Document analysis results using the custom prompt
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 result:
- *                   type: string
- *                   description: The raw AI response using the custom prompt
- *                   example: "Company: Acme Corp\nAmount: $125.00\nDue Date: 2023-08-15"
- *                 metrics:
- *                   type: object
- *                   description: Token usage metrics (when using OpenAI)
- *                   properties:
- *                     promptTokens:
- *                       type: number
- *                       example: 350
- *                     completionTokens:
- *                       type: number
- *                       example: 120
- *                     totalTokens:
- *                       type: number
- *                       example: 470
- *       400:
- *         description: Invalid request parameters
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Error'
- *       500:
- *         description: Server error or AI provider not configured
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Error'
- */
-router.post('/manual/playground', express.json(), async (req, res) => {
-  try {
-    const { content, existingTags, prompt, documentId } = req.body;
-    
-    if (!content || typeof content !== 'string') {
-      console.log('Invalid content received:', content);
-      return res.status(400).json({ error: 'Valid content string is required' });
-    }
-
-    if (process.env.AI_PROVIDER === 'openai') {
-      const analyzeDocument = await openaiService.analyzePlayground(content, prompt);
-      await documentModel.addOpenAIMetrics(
-        documentId, 
-        analyzeDocument.metrics.promptTokens,
-        analyzeDocument.metrics.completionTokens,
-        analyzeDocument.metrics.totalTokens
-      )
-      return res.json(analyzeDocument);
-    } else if (process.env.AI_PROVIDER === 'ollama') {
-      const analyzeDocument = await ollamaService.analyzePlayground(content, prompt);
-      return res.json(analyzeDocument);
-    } else if (process.env.AI_PROVIDER === 'custom') {
-      const analyzeDocument = await customService.analyzePlayground(content, prompt);
-      await documentModel.addOpenAIMetrics(
-        documentId, 
-        analyzeDocument.metrics.promptTokens,
-        analyzeDocument.metrics.completionTokens,
-        analyzeDocument.metrics.totalTokens
-      )
-      return res.json(analyzeDocument);
-    } else if (process.env.AI_PROVIDER === 'azure') {
-      const analyzeDocument = await azureService.analyzePlayground(content, prompt);
-      await documentModel.addOpenAIMetrics(
-        documentId, 
-        analyzeDocument.metrics.promptTokens,
-        analyzeDocument.metrics.completionTokens,
-        analyzeDocument.metrics.totalTokens
-      )
-      return res.json(analyzeDocument);
-    } else {
-      return res.status(500).json({ error: 'AI provider not configured' });
-    }
-  } catch (error) {
-    console.error('Analysis error:', error);
-    return res.status(500).json({ error: error.message });
-  }
-});
+router.post('/manual/playground', protectApiRoute, retiredApiRoute('Playground mode has been removed from paperlesser.'));
 
 /**
  * @swagger
@@ -3280,7 +2981,7 @@ router.post('/manual/playground', express.json(), async (req, res) => {
  */
 router.post('/manual/updateDocument', express.json(), async (req, res) => {
   try {
-    var { documentId, tags, correspondent, title } = req.body;
+    var { documentId, tags, correspondent, title, documentType, ownerId } = req.body;
     console.log("TITLE: ", title);
     // Convert all tags to names if they are IDs
     tags = await Promise.all(tags.map(async tag => {
@@ -3304,6 +3005,7 @@ router.post('/manual/updateDocument', express.json(), async (req, res) => {
 
     // Process correspondent if provided
     const correspondentData = correspondent ? await paperlessService.getOrCreateCorrespondent(correspondent) : null;
+    const documentTypeData = documentType ? await paperlessService.getOrCreateDocumentType(documentType) : null;
 
 
     await paperlessService.removeUnusedTagsFromDocument(documentId, tagIds);
@@ -3312,7 +3014,9 @@ router.post('/manual/updateDocument', express.json(), async (req, res) => {
     const updateData = {
       tags: tagIds,
       correspondent: correspondentData ? correspondentData.id : null,
-      title: title ? title : null
+      title: title ? title : null,
+      document_type: documentTypeData ? documentTypeData.id : null,
+      owner: ownerId ? Number(ownerId) : null
     };
 
     if(updateData.tags === null && updateData.correspondent === null && updateData.title === null) {
@@ -3418,7 +3122,7 @@ router.get('/health', async (req, res) => {
  *   post:
  *     summary: Submit initial application setup configuration
  *     description: |
- *       Configures the initial setup of the Paperless-AI application, including connections
+ *       Configures the initial setup of the paperlesser application, including connections
  *       to Paperless-ngx, AI provider settings, processing parameters, and user authentication.
  *       
  *       This endpoint is primarily used during the first-time setup of the application and
@@ -3518,11 +3222,11 @@ router.get('/health', async (req, res) => {
  *                 example: "Invoice,Receipt"
  *               username:
  *                 type: string
- *                 description: Admin username for Paperless-AI
+ *                 description: Admin username for paperlesser
  *                 example: "admin"
  *               password:
  *                 type: string
- *                 description: Admin password for Paperless-AI
+ *                 description: Admin password for paperlesser
  *                 example: "securepassword"
  *               useExistingData:
  *                 type: boolean
@@ -3786,7 +3490,7 @@ router.post('/setup', express.json(), async (req, res) => {
  *   post:
  *     summary: Update application settings
  *     description: |
- *       Updates the configuration settings of the Paperless-AI application after initial setup.
+ *       Updates the configuration settings of the paperlesser application after initial setup.
  *       This endpoint allows administrators to modify connections to Paperless-ngx, 
  *       AI provider settings, processing parameters, and feature toggles.
  *       
@@ -4214,19 +3918,7 @@ router.get('/api/processing-status', async (req, res) => {
   }
 });
 
-router.get('/api/rag-test', async (req, res) => {
-  RAGService.initialize();
-  try { 
-    if(await RAGService.sendDocumentsToRAGService()){
-      res.status(200).json({ success: true });
-    }else{
-      res.status(500).json({ success: false });
-    }    
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch processing status' });
-  }
-}
-);
+router.get('/api/rag-test', protectApiRoute, retiredApiRoute('RAG features have been removed from paperlesser.'));
 
 router.get('/dashboard/doc/:id', async (req, res) => {
   const docId = req.params.id;

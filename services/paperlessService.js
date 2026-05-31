@@ -880,56 +880,6 @@ class PaperlessService {
     }
   }
 
-  async getDocumentsForRAGService () {
-    /**
-     * Get all documents with metadata (title, tags, correspondent, created date and content).
-     * 
-     * @returns    An array of documents with metadata.
-     * @throws     An error if the request fails.
-     * @note       This method is used to get all documents with metadata for further processing 
-     */
-    
-    this.initialize();
-    try {
-      let response;
-      let page = 1;
-      let hasMore = true;
-  
-      while (hasMore) {
-        try {
-          const params = {
-            params: { fields: 'id,title,tags,correspondent,created,content' },
-            page,
-            page_size: 100,  // Maximale Seitengröße für effizientes Laden
-            ordering: 'name'  // Optional: Sortierung nach Namen
-          };
-
-          response = await this.client.get('/documents/', { params });
-
-          if (!response?.data?.results || !Array.isArray(response.data.results)) {
-            console.error(`[DEBUG] Invalid API response on page ${page}`);
-            break;
-          }
-
-          hasMore = response.data.next !== null;
-          page++;
-        
-        } catch (error) {
-          console.error(`[ERROR] fetching documents page ${page}:`, error.message);
-          if (error.response) {
-            console.error('[ERROR] Response status:', error.response.status);
-          }
-          break;
-        }
-      }  
-      return response.data.results;
-    } catch (error) {
-      console.error('[ERROR] fetching documents with metadata:', error.message);
-      return [];
-    }
-  }
-
-
   // Aktualisierte getDocuments Methode
   async getDocuments() {
     return this.getAllDocuments();
@@ -1257,6 +1207,34 @@ async getOrCreateDocumentType(name) {
     } catch (error) {
       console.error(`[ERROR] No Permission to edit document ${documentId}:`, error.message);
       return null;
+    }
+  }
+
+  async getUsers() {
+    this.initialize();
+    try {
+      let users = [];
+      let page = 1;
+      let hasNextPage = true;
+
+      while (hasNextPage) {
+        const response = await this.client.get('/users/', {
+          params: {
+            fields: 'id,username',
+            page,
+            page_size: 100
+          }
+        });
+
+        users = users.concat(response.data.results || []);
+        hasNextPage = response.data.next !== null;
+        page += 1;
+      }
+
+      return users;
+    } catch (error) {
+      console.error('[ERROR] fetching users:', error.message);
+      return [];
     }
   }
 

@@ -83,6 +83,7 @@ function buildUiConfig(env = process.env, version = '') {
     EXTERNAL_API_TRANSFORM: env.EXTERNAL_API_TRANSFORM || '',
     CUSTOM_FIELDS: env.CUSTOM_FIELDS || '{"custom_fields":[]}',
     API_KEY: env.API_KEY || '',
+    AI_REASONING_EFFORT: env.AI_REASONING_EFFORT || 'low',
     PAPERLESS_AI_VERSION: version,
     SYSTEM_PROMPT: ''
   };

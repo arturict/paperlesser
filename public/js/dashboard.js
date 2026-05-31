@@ -1,281 +1,210 @@
-// Theme Management
-class ThemeManager {
-    constructor() {
-        this.themeToggle = document.getElementById('themeToggle');
-        this.initialize();
-    }
+class DashboardPage {
+  constructor() {
+    this.data = window.dashboardPageData || {};
+    this.renderCharts();
+    this.bindActions();
+    this.refreshProcessingStatus();
+    window.setInterval(() => this.refreshProcessingStatus(), 3000);
+  }
 
-    initialize() {
-        const savedTheme = localStorage.getItem('theme') || 'light';
-        this.setTheme(savedTheme);
-        console.log('Theme initialized');
-        this.themeToggle.addEventListener('click', () => this.toggleTheme());
-    }
+  bindActions() {
+    document.getElementById('scanButton')?.addEventListener('click', () => this.triggerScan());
+    document.getElementById('showTagsButton')?.addEventListener('click', () => this.showCollection('/api/tagsCount', 'Tag activity', 'name'));
+    document.getElementById('showCorrespondentsButton')?.addEventListener('click', () => this.showCollection('/api/correspondentsCount', 'Correspondent activity', 'name'));
+    document.querySelectorAll('[data-close-modal]').forEach((button) => {
+      button.addEventListener('click', () => this.closeModal());
+    });
+  }
 
-    setTheme(theme) {
-        document.documentElement.setAttribute('data-theme', theme);
-        localStorage.setItem('theme', theme);
-        
-        const icon = this.themeToggle.querySelector('i');
-        icon.className = theme === 'light' ? 'fas fa-moon' : 'fas fa-sun';
-    }
+  async triggerScan() {
+    const button = document.getElementById('scanButton');
+    const label = button?.querySelector('span');
+    if (!button || button.disabled) return;
 
-    toggleTheme() {
-        const currentTheme = document.documentElement.getAttribute('data-theme');
-        const newTheme = currentTheme === 'light' ? 'dark' : 'light';
-        this.setTheme(newTheme);
-        console.log('Theme toggled to: ' + newTheme);
-    }
-}
-
-// Chart Initialization
-class ChartManager {
-    constructor() {
-        this.initializeDocumentChart();
-    }
-
-    initializeDocumentChart() {
-        const { documentCount, processedCount } = window.dashboardData;
-        const unprocessedCount = documentCount - processedCount;
-
-        const ctx = document.getElementById('documentChart').getContext('2d');
-        new Chart(ctx, {
-            type: 'doughnut',
-            data: {
-                labels: ['AI Processed', 'Unprocessed'],
-                datasets: [{
-                    data: [processedCount, unprocessedCount],
-                    backgroundColor: [
-                        '#3b82f6',  // blue-500
-                        '#e2e8f0'   // gray-200
-                    ],
-                    borderWidth: 0,
-                    spacing: 2
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                cutout: '70%',
-                plugins: {
-                    legend: {
-                        display: false
-                    },
-                    tooltip: {
-                        callbacks: {
-                            label: function(context) {
-                                const value = context.raw;
-                                const total = processedCount + unprocessedCount;
-                                const percentage = ((value / total) * 100).toFixed(1);
-                                return `${value} (${percentage}%)`;
-                            }
-                        }
-                    }
-                }
-            }
-        });
-    }
-}
-
-// Modal Management
-class ModalManager {
-    constructor() {
-        this.modal = document.getElementById('detailsModal');
-        this.modalTitle = this.modal.querySelector('.modal-title');
-        this.modalContent = this.modal.querySelector('.modal-data');
-        this.modalLoader = this.modal.querySelector('.modal-loader');
-        this.initializeEventListeners();
-    }
-
-    initializeEventListeners() {
-        // Close button click
-        this.modal.querySelector('.modal-close').addEventListener('click', () => this.hideModal());
-        
-        // Overlay click
-        this.modal.querySelector('.modal-overlay').addEventListener('click', () => this.hideModal());
-        
-        // Escape key press
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape' && this.modal.classList.contains('show')) {
-                this.hideModal();
-            }
-        });
-    }
-
-    showModal(title) {
-        this.modalTitle.textContent = title;
-        this.modalContent.innerHTML = '';
-        this.modal.classList.remove('hidden'); // Fix: Remove 'hidden' class
-        this.modal.classList.add('show');
-        document.body.style.overflow = 'hidden';
-    }
-
-    hideModal() {
-        this.modal.classList.remove('show');
-        this.modal.classList.add('hidden'); // Fix: Add 'hidden' class back
-        document.body.style.overflow = '';
-    }
-
-    showLoader() {
-        this.modalLoader.classList.remove('hidden');
-        this.modalContent.classList.add('hidden');
-    }
-
-    hideLoader() {
-        this.modalLoader.classList.add('hidden');
-        this.modalContent.classList.remove('hidden');
-    }
-
-    setContent(content) {
-        this.modalContent.innerHTML = content;
-    }
-}
-
-// Make showTagDetails and showCorrespondentDetails globally available
-window.showTagDetails = async function() {
-    window.modalManager.showModal('Tag Overview');
-    window.modalManager.showLoader();
+    button.disabled = true;
+    if (label) label.textContent = 'Scanning...';
 
     try {
-        const response = await fetch('/api/tagsCount');
-        const tags = await response.json();
+      const response = await fetch('/api/scan/now', { method: 'POST' });
+      if (!response.ok) {
+        throw new Error('Scan failed');
+      }
 
-        let content = '<div class="detail-list">';
-        tags.forEach(tag => {
-            content += `
-                <div class="detail-item">
-                    <span class="detail-item-name">${tag.name}</span>
-                    <span class="detail-item-info">${tag.document_count || 0} documents</span>
-                </div>
-            `;
-        });
-        content += '</div>';
-
-        window.modalManager.setContent(content);
+      document.getElementById('scanResult')?.classList.remove('hidden');
+      this.refreshProcessingStatus();
     } catch (error) {
-        console.error('Error loading tags:', error);
-        window.modalManager.setContent('<div class="text-red-500 p-4">Error loading tags. Please try again later.</div>');
+      window.alert(error.message);
     } finally {
-        window.modalManager.hideLoader();
+      button.disabled = false;
+      if (label) label.textContent = 'Scan now';
     }
-}
+  }
 
-window.showCorrespondentDetails = async function() {
-    window.modalManager.showModal('Correspondent Overview');
-    window.modalManager.showLoader();
+  renderCharts() {
+    if (!window.Chart) return;
+
+    this.renderProcessingChart();
+    this.renderTokenChart();
+    this.renderDocumentTypeChart();
+    this.renderTimelineChart();
+  }
+
+  renderProcessingChart() {
+    const canvas = document.getElementById('processingChart');
+    if (!canvas) return;
+
+    const processed = this.data.processedCount || 0;
+    const total = this.data.documentCount || 0;
+    const remaining = Math.max(total - processed, 0);
+
+    new Chart(canvas, {
+      type: 'doughnut',
+      data: {
+        labels: ['Processed', 'Remaining'],
+        datasets: [{
+          data: [processed, remaining],
+          backgroundColor: ['#8b5cf6', '#1f2937'],
+          borderWidth: 0
+        }]
+      },
+      options: {
+        plugins: { legend: { display: false } },
+        cutout: '72%'
+      }
+    });
+  }
+
+  renderTokenChart() {
+    const canvas = document.getElementById('tokenDistributionChart');
+    if (!canvas) return;
+
+    const distribution = this.data.tokenDistribution || [];
+    new Chart(canvas, {
+      type: 'bar',
+      data: {
+        labels: distribution.map((item) => item.range),
+        datasets: [{
+          label: 'Documents',
+          data: distribution.map((item) => item.count),
+          backgroundColor: '#14b8a6',
+          borderRadius: 10
+        }]
+      },
+      options: {
+        scales: {
+          y: { beginAtZero: true, ticks: { precision: 0 } }
+        },
+        plugins: { legend: { display: false } }
+      }
+    });
+  }
+
+  renderDocumentTypeChart() {
+    const canvas = document.getElementById('documentTypeChart');
+    if (!canvas) return;
+
+    const docTypes = (this.data.documentTypes || []).slice(0, 6);
+    new Chart(canvas, {
+      type: 'polarArea',
+      data: {
+        labels: docTypes.map((item) => item.type || 'Unknown'),
+        datasets: [{
+          data: docTypes.map((item) => item.count),
+          backgroundColor: ['#8b5cf6', '#22c55e', '#f59e0b', '#0ea5e9', '#ef4444', '#ec4899']
+        }]
+      },
+      options: {
+        plugins: { legend: { position: 'bottom' } }
+      }
+    });
+  }
+
+  renderTimelineChart() {
+    const canvas = document.getElementById('timelineChart');
+    if (!canvas) return;
+
+    const timeline = this.data.processingTimeStats || [];
+    const hours = Array.from({ length: 24 }, (_, hour) => String(hour).padStart(2, '0'));
+    const countsByHour = new Map(timeline.map((item) => [item.hour, item.count]));
+
+    new Chart(canvas, {
+      type: 'line',
+      data: {
+        labels: hours,
+        datasets: [{
+          label: 'Processed today',
+          data: hours.map((hour) => countsByHour.get(hour) || 0),
+          borderColor: '#8b5cf6',
+          tension: 0.35,
+          fill: false
+        }]
+      },
+      options: {
+        plugins: { legend: { display: false } },
+        scales: { y: { beginAtZero: true, ticks: { precision: 0 } } }
+      }
+    });
+  }
+
+  async showCollection(url, title, labelKey) {
+    const modal = document.getElementById('dashboardModal');
+    const heading = document.getElementById('dashboardModalTitle');
+    const content = document.getElementById('dashboardModalContent');
+    if (!modal || !heading || !content) return;
+
+    heading.textContent = title;
+    content.innerHTML = '<p class="field-hint">Loading...</p>';
+    modal.classList.add('is-open');
 
     try {
-        const response = await fetch('/api/correspondentsCount');
-        const correspondents = await response.json();
-
-        let content = '<div class="detail-list">';
-        correspondents.forEach(correspondent => {
-            content += `
-                <div class="detail-item">
-                    <span class="detail-item-name">${correspondent.name}</span>
-                    <span class="detail-item-info">${correspondent.document_count || 0} documents</span>
-                </div>
-            `;
-        });
-        content += '</div>';
-
-        window.modalManager.setContent(content);
+      const response = await fetch(url);
+      const items = await response.json();
+      content.innerHTML = items.map((item) => `
+        <div class="choice-card" style="margin-bottom:0.75rem;">
+          <div class="choice-title"><span>${item[labelKey]}</span><span>${item.document_count || item.count || 0}</span></div>
+        </div>
+      `).join('');
     } catch (error) {
-        console.error('Error loading correspondents:', error);
-        window.modalManager.setContent('<div class="text-red-500 p-4">Error loading correspondents. Please try again later.</div>');
-    } finally {
-        window.modalManager.hideLoader();
+      content.innerHTML = `<div class="danger">${error.message}</div>`;
     }
-}
+  }
 
-// Navigation Management
-class NavigationManager {
-    constructor() {
-        this.sidebarLinks = document.querySelectorAll('.sidebar-link');
-        this.initialize();
-    }
+  closeModal() {
+    document.getElementById('dashboardModal')?.classList.remove('is-open');
+  }
 
-    initialize() {
-        this.sidebarLinks.forEach(link => {
-            link.addEventListener('click', (e) => {
-                // Nur für Links ohne echtes Ziel preventDefault aufrufen
-                if (link.getAttribute('href') === '#') {
-                    e.preventDefault();
-                }
-                this.setActiveLink(link);
-            });
-        });
-    }
-
-    setActiveLink(activeLink) {
-        this.sidebarLinks.forEach(link => {
-            link.classList.remove('active');
-        });
-        activeLink.classList.add('active');
-    }
-}
-
-// API Functions
-async function showTagDetails() {
-    modalManager.showModal('Tag Overview');
-    modalManager.showLoader();
-
+  async refreshProcessingStatus() {
     try {
-        const response = await fetch('/api/tags');
-        const tags = await response.json();
+      const response = await fetch('/api/processing-status');
+      const status = await response.json();
+      const stateNode = document.getElementById('processingState');
+      const currentNode = document.getElementById('processingCurrent');
+      const lastNode = document.getElementById('processingLast');
+      const todayNode = document.getElementById('processingToday');
 
-        let content = '<div class="detail-list">';
-        tags.forEach(tag => {
-            content += `
-                <div class="detail-item">
-                    <span class="detail-item-name">${tag.name}</span>
-                    <span class="detail-item-info">${tag.document_count || 0} documents</span>
-                </div>
-            `;
-        });
-        content += '</div>';
+      if (stateNode) {
+        stateNode.textContent = status.currentlyProcessing ? 'Processing now' : 'Idle';
+      }
 
-        modalManager.setContent(content);
-    } catch (error) {
-        console.error('Error loading tags:', error);
-        modalManager.setContent('<div class="text-red-500 p-4">Error loading tags. Please try again later.</div>');
-    } finally {
-        modalManager.hideLoader();
+      if (currentNode) {
+        currentNode.textContent = status.currentlyProcessing
+          ? `${status.currentlyProcessing.title} (#${status.currentlyProcessing.documentId})`
+          : 'No active document';
+      }
+
+      if (lastNode) {
+        lastNode.textContent = status.lastProcessed?.title || 'No processed documents yet';
+      }
+
+      if (todayNode) {
+        todayNode.textContent = String(status.processedToday || 0);
+      }
+    } catch {
+      // keep dashboard usable if this poll fails
     }
+  }
 }
 
-async function showCorrespondentDetails() {
-    modalManager.showModal('Correspondent Overview');
-    modalManager.showLoader();
-
-    try {
-        const response = await fetch('/api/correspondents');
-        const correspondents = await response.json();
-
-        let content = '<div class="detail-list">';
-        correspondents.forEach(correspondent => {
-            content += `
-                <div class="detail-item">
-                    <span class="detail-item-name">${correspondent.name}</span>
-                    <span class="detail-item-info">${correspondent.document_count || 0} documents</span>
-                </div>
-            `;
-        });
-        content += '</div>';
-
-        modalManager.setContent(content);
-    } catch (error) {
-        console.error('Error loading correspondents:', error);
-        modalManager.setContent('<div class="text-red-500 p-4">Error loading correspondents. Please try again later.</div>');
-    } finally {
-        modalManager.hideLoader();
-    }
-}
-
-// Initialize everything when DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
-    window.themeManager = new ThemeManager();
-    window.navigationManager = new NavigationManager();
-    window.chartManager = new ChartManager();
-    window.modalManager = new ModalManager();
+  window.dashboardPage = new DashboardPage();
 });

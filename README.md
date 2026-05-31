@@ -1,140 +1,84 @@
-# 📄 Paperless-AI
+# paperlesser
 
-[![GitHub commit activity](https://img.shields.io/github/commit-activity/t/clusterzx/paperless-ai)](https://github.com/clusterzx/paperless-ai/commits/main)
-[![Docker Pulls](https://img.shields.io/docker/pulls/clusterzx/paperless-ai)](https://hub.docker.com/r/clusterzx/paperless-ai)
-[![GitHub Stars](https://img.shields.io/github/stars/clusterzx)](https://github.com/clusterzx)
-[![License](https://img.shields.io/github/license/clusterzx/paperless-ai?cacheSeconds=1)](LICENSE)
+[![GitHub Stars](https://img.shields.io/github/stars/arturict/paperlesser)](https://github.com/arturict/paperlesser)
+[![GitHub License](https://img.shields.io/github/license/arturict/paperlesser)](LICENSE)
 
-# ⚠️ IMPORTANT NOTICE:
-This repo is currently not maintained. I appreciate all the efforts from the community pushing PRs and creating issues.
-I'm currently rewriting the entire codebase with a more stable, up-to-date architecture. But I'm limited to evenings, and doing support here while also working on the rewrite just isn't feasible for me.
-With the upcoming official AI integration in Paperless-ngx itself, I'm also not sure if I'll complete the rewrite or continue maintaining this repo at all.
+`paperlesser` is a modernized fork of an older Paperless-ngx AI filing project, focused on cleaner filing workflows, current model selection, and a much better admin UI.
 
----
+## What changed
 
-**Paperless-AI** is an AI-powered extension for [Paperless-ngx](https://github.com/paperless-ngx/paperless-ngx) that brings automatic document classification, smart tagging, and semantic search using OpenAI-compatible APIs and Ollama.
+- Clean provider and model selection
+- OpenRouter first-class support with curated small-model presets
+- Custom OpenRouter model slugs
+- Local or remote Ollama with model discovery from the instance
+- OpenAI-compatible API support for LM Studio, LiteLLM, vLLM, FastChat, and similar gateways
+- Prompt editing removed from the UI
+- Chat, RAG chat, and playground removed from the main product flow
+- Improved dashboard, darker dark mode, and cleaner manual review
+- Semantic versioning independent from upstream
 
-It enables **fully automated document workflows**, **contextual chat**, and **powerful customization** — all via an intuitive web interface.
+## Recommended default
 
-> 💡 Just ask:  
-> “When did I sign my rental agreement?”  
-> “What was the amount of the last electricity bill?”  
-> “Which documents mention my health insurance?”  
+- Provider: `OpenRouter`
+- Model: `openai/gpt-5.4-nano`
 
-Powered by **Retrieval-Augmented Generation (RAG)**, you can now search semantically across your full archive and get precise, natural language answers.
+Other curated OpenRouter presets included by default:
 
----
+- `openai/gpt-5.4-mini`
+- `anthropic/claude-haiku-4.5`
+- `google/gemini-3.1-flash-lite`
+- `google/gemini-3-flash-preview`
+- `minimax/minimax-m2.7`
+- `google/gemma-4-31b-it`
+- `qwen/qwen3.5-flash-02-23`
+- `moonshotai/kimi-k2.6`
 
-## ✨ Features
+## Running with Docker
 
-### 🔄 Automated Document Processing
-- Detects new documents in Paperless-ngx automatically
-- Analyzes content using OpenAI API, Ollama, and other compatible backends
-- Assigns title, tags, document type, and correspondent
-- Built-in support for:
-  - Ollama (Mistral, Llama, Phi-3, Gemma-2)
-  - OpenAI
-  - DeepSeek.ai
-  - OpenRouter.ai
-  - Perplexity.ai
-  - Together.ai
-  - LiteLLM
-  - VLLM
-  - Fastchat
-  - Gemini (Google)
-  - ...and more!
-
-### 🧠 RAG-Based AI Chat
-- Natural language document search and Q&A
-- Understands full document context (not just keywords)
-- Semantic memory powered by your own data
-- Fast, intelligent, privacy-friendly document queries  
-![RAG_CHAT_DEMO](https://raw.githubusercontent.com/clusterzx/paperless-ai/refs/heads/main/ppairag.png)
-
-### ⚙️ Manual Processing
-- Web interface for manual AI tagging
-- Useful when reviewing sensitive documents
-- Accessible via `/manual`
-
-### 🧩 Smart Tagging & Rules
-- Define rules to limit which documents are processed
-- Disable prompts and apply tags automatically
-- Set custom output tags for tracked classification  
-![PPAI_SHOWCASE3](https://github.com/user-attachments/assets/1fc9f470-6e45-43e0-a212-b8fa6225e8dd)
-
----
-
-## 🚀 Installation
-
-> ⚠️ **First-time install:** Restart the container **after completing setup** (API keys, preferences) to build RAG index.  
-> 🔁 Not required for updates.
-
-📘 [Installation Wiki](https://github.com/clusterzx/paperless-ai/wiki/2.-Installation)
-
----
-
-## 🐳 Docker Support
-
-- Health monitoring and auto-restart
-- Persistent volumes and graceful shutdown
-- Works out of the box with minimal setup
-
----
-
-## 🔧 Local Development
+Use the included compose file as a starting point:
 
 ```bash
-# Install dependencies
-npm install
+docker compose up -d
+```
 
-# Start development/test mode
+Default image reference in `docker-compose.yml`:
+
+```yaml
+image: ghcr.io/arturict/paperlesser:latest
+```
+
+## Upgrading from older Paperless-AI installs
+
+1. Stop the old container.
+2. Point your deployment to `ghcr.io/arturict/paperlesser:latest` or a tagged `4.x.y` release.
+3. Keep your existing `/app/data` volume mounted.
+4. Start the new container.
+5. Open `/settings` and re-save your provider configuration once, especially if you want to move to OpenRouter.
+
+## Publishing your own build
+
+The GitHub workflows are already updated for `paperlesser` image names.
+
+To publish from your fork, set these repository secrets:
+
+- `DOCKER_USERNAME`
+- `DOCKER_PASSWORD`
+- `GHCR_PAT`
+
+Then either:
+
+- create a GitHub release for semver tags, or
+- run the manual Docker workflow
+
+## Development
+
+```bash
+npm install
 npm run test
 ```
 
----
+## Notes
 
-## 🧭 Roadmap Highlights
-
-- ✅ Multi-AI model support
-- ✅ Multilingual document analysis
-- ✅ Tag rules and filters
-- ✅ Integrated document chat with RAG
-- ✅ Responsive web interface
-
----
-
-## 🤝 Contributing
-
-We welcome PRs and contributions!
-
-```bash
-# Fork, clone, then:
-git checkout -b feature/YourFeature
-# After changes:
-git commit -m "Add YourFeature"
-git push origin feature/YourFeature
-```
-
-Then open a Pull Request via GitHub.
-
----
-
-## 🆘 Support & Community
-
-- [Issues](https://github.com/clusterzx/paperless-ai/issues)
-- [Discord](https://discord.gg/AvNekAfK38)
-
----
-
-## 📄 License
-
-This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
-
----
-
-## 🙏 Support Development
-
-[![Patreon](https://img.shields.io/badge/Patreon-F96854?style=for-the-badge&logo=patreon&logoColor=white)](https://www.patreon.com/c/clusterzx)
-[![PayPal](https://img.shields.io/badge/PayPal-00457C?style=for-the-badge&logo=paypal&logoColor=white)](https://www.paypal.com/paypalme/bech0r)
-[![BuyMeACoffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ffdd00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://www.buymeacoffee.com/clusterzx)
-[![Ko-Fi](https://img.shields.io/badge/Ko--fi-F16061?style=for-the-badge&logo=ko-fi&logoColor=white)](https://ko-fi.com/clusterzx)
+- GPT-5 family models are kept on low reasoning effort by default.
+- Token limit and custom prompt controls were intentionally removed from the UI.
+- Manual review now supports editing title, tags, correspondent, document type, and owner assignment when available in Paperless.
